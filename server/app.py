@@ -6,8 +6,7 @@ from typing import Optional
 import os
 from pathlib import Path
 import asyncio
-
-from bot.telegram_bot import TelegramBot
+import threading
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -27,13 +26,46 @@ app.add_middleware(
 # Глобальная переменная для бота
 telegram_bot = None
 
+def start_bot_polling():
+    """Запускает поллинг бота в отдельном потоке"""
+    try:
+        from bot.telegram_bot import TelegramBot
+        
+        token = os.getenv('TELEGRAM_BOT_TOKEN')
+        if not token:
+            logger.error("❌ TELEGRAM_BOT_TOKEN не установлен")
+            return
+        
+        bot = TelegramBot(token=token)
+        
+        # Запускаем поллинг в event loop
+        import asyncio
+        asyncio.run(bot.start_polling())
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка запуска бота: {e}")
+
 @app.on_event("startup")
 async def startup_event():
     """Инициализация при старте приложения"""
     global telegram_bot
+    
     try:
-        telegram_bot = TelegramBot()
+        from bot.telegram_bot import TelegramBot
+        
+        token = os.getenv('TELEGRAM_BOT_TOKEN')
+        if not token:
+            logger.error("❌ TELEGRAM_BOT_TOKEN не установлен в переменных окружения")
+            return
+        
+        telegram_bot = TelegramBot(token=token)
         logger.info("✅ Telegram бот инициализирован при старте")
+        
+        # Запускаем поллинг в фоновом потоке
+        bot_thread = threading.Thread(target=start_bot_polling, daemon=True)
+        bot_thread.start()
+        logger.info("🚀 Поллинг бота запущен в фоновом режиме")
+        
     except Exception as e:
         logger.error(f"❌ Ошибка инициализации бота: {e}")
 
@@ -49,7 +81,7 @@ async def process_alert_background(
     """Фоновая обработка уведомления"""
     try:
         if telegram_bot:
-            await telegram_bot.send_alert_to_user(
+            success = await telegram_bot.send_alert_to_user(
                 computer_id=computer_id,
                 message=message,
                 detection_count=detection_count,
@@ -57,8 +89,24 @@ async def process_alert_background(
                 stranger_photo_path=stranger_photo_path,
                 screenshot_path=screenshot_path
             )
+            if success:
+                logger.info(f"✅ Уведомление отправлено для компьютера {computer_id}")
+            else:
+                logger.error(f"❌ Не удалось отправить уведомление для компьютера {computer_id}")
+        else:
+            logger.warning("⚠️ Telegram бот не доступен, уведомление не отправлено")
+            
     except Exception as e:
         logger.error(f"❌ Ошибка фоновой обработки: {e}")
+    finally:
+        # Удаляем временные файлы
+        for file_path in [stranger_photo_path, screenshot_path]:
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    logger.debug(f"🗑️ Удален временный файл: {file_path}")
+                except Exception as e:
+                    logger.error(f"❌ Ошибка удаления файла {file_path}: {e}")
 
 @app.post("/api/alert")
 async def receive_alert(
@@ -86,6 +134,7 @@ async def receive_alert(
                 content = await stranger_photo.read()
                 f.write(content)
             saved_files['stranger_photo'] = stranger_path
+            logger.info(f"📸 Сохранено фото незнакомца: {stranger_path}")
         
         if screenshot:
             screenshot_path = f"temp_screenshot_{computer_id}.png"
@@ -93,6 +142,7 @@ async def receive_alert(
                 content = await screenshot.read()
                 f.write(content)
             saved_files['screenshot'] = screenshot_path
+            logger.info(f"🖥️ Сохранен скриншот: {screenshot_path}")
         
         # Запускаем фоновую задачу для отправки уведомления
         background_tasks.add_task(
@@ -106,10 +156,10 @@ async def receive_alert(
             screenshot_path=saved_files.get('screenshot')
         )
         
-        # Немедленно возвращаем ответ, не дожидаясь отправки в Telegram
         return {
             "status": "success", 
-            "message": "Уведомление принято в обработку"
+            "message": "Уведомление принято в обработку",
+            "computer_id": computer_id
         }
             
     except Exception as e:
@@ -118,16 +168,21 @@ async def receive_alert(
 
 @app.get("/")
 async def root():
+    bot_status = "active" if telegram_bot else "inactive"
     return {
         "message": "Computer Guard API работает!",
         "version": "1.0",
-        "status": "active"
+        "status": "healthy",
+        "telegram_bot": bot_status,
+        "endpoints": {
+            "alert": "POST /api/alert",
+            "health": "GET /health"
+        }
     }
 
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
 
-# Для локального запуска
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)

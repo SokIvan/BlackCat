@@ -10,16 +10,15 @@ from aiogram.types import Message, FSInputFile
 import asyncio
 
 class TelegramBot:
-    def __init__(self, token: str = None, config_path: str = "bot_config.json"):
+    def __init__(self, token: str = None):
         self.logger = logging.getLogger(__name__)
-        self.config = self._load_config(config_path, token)
         
-        if self.config['telegram_token'] == "YOUR_BOT_TOKEN_HERE":
-            self.logger.error("❌ Не установлен Telegram токен!")
-            raise ValueError("Установите TELEGRAM_TOKEN в bot_config.json")
+        if not token:
+            self.logger.error("❌ Не предоставлен Telegram токен!")
+            raise ValueError("Требуется Telegram токен")
         
         self.bot = Bot(
-            token=self.config['telegram_token'],
+            token=token,
             default=DefaultBotProperties(parse_mode=ParseMode.HTML)
         )
         self.dp = Dispatcher()
@@ -27,33 +26,12 @@ class TelegramBot:
         self._register_handlers()
         self.logger.info("✅ Telegram бот (aiogram) инициализирован")
     
-    def _load_config(self, config_path: str, token: str = None):
-        """Загружает конфигурацию бота"""
-        config_file = Path(config_path)
-        default_config = {
-            "telegram_token": token or "YOUR_BOT_TOKEN_HERE",
-            "admin_chat_id": None
-        }
-        
-        if config_file.exists():
-            try:
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    user_config = json.load(f)
-                    default_config.update(user_config)
-            except Exception as e:
-                self.logger.error(f"Ошибка загрузки конфигурации бота: {e}")
-        
-        # Сохраняем конфиг
-        with open(config_file, 'w', encoding='utf-8') as f:
-            json.dump(default_config, f, indent=2, ensure_ascii=False)
-        
-        return default_config
-    
     def _register_handlers(self):
         """Регистрирует обработчики команд aiogram"""
         self.dp.message(Command("start"))(self._start_command)
         self.dp.message(Command("register"))(self._register_command)
         self.dp.message(Command("help"))(self._help_command)
+        self.dp.message(Command("status"))(self._status_command)
     
     async def _start_command(self, message: Message):
         """Обработчик команды /start"""
@@ -65,6 +43,7 @@ class TelegramBot:
             "<code>/register YOUR_COMPUTER_ID</code>\n\n"
             "Для справки: /help"
         )
+        self.logger.info(f"👤 Пользователь {message.from_user.id} запустил бота")
     
     async def _register_command(self, message: Message):
         """Обработчик команды /register"""
@@ -84,8 +63,12 @@ class TelegramBot:
             registrations = {}
             reg_file = Path("user_registrations.json")
             if reg_file.exists():
-                with open(reg_file, 'r', encoding='utf-8') as f:
-                    registrations = json.load(f)
+                try:
+                    with open(reg_file, 'r', encoding='utf-8') as f:
+                        registrations = json.load(f)
+                except Exception as e:
+                    self.logger.error(f"Ошибка чтения файла регистраций: {e}")
+                    registrations = {}
             
             # Сохраняем привязку пользователь -> компьютер
             registrations[str(message.from_user.id)] = {
@@ -96,18 +79,58 @@ class TelegramBot:
             }
             
             # Сохраняем в файл
-            with open(reg_file, 'w', encoding='utf-8') as f:
-                json.dump(registrations, f, indent=2, ensure_ascii=False)
+            try:
+                with open(reg_file, 'w', encoding='utf-8') as f:
+                    json.dump(registrations, f, indent=2, ensure_ascii=False)
+            except Exception as e:
+                self.logger.error(f"Ошибка записи файла регистраций: {e}")
+                await message.answer("❌ Ошибка сохранения привязки")
+                return
             
             await message.answer(
                 f"✅ Компьютер <code>{computer_id}</code> успешно привязан!\n\n"
-                "Теперь вы будете получать уведомления когда система обнаружит незнакомца за вашим компьютером."
+                "Теперь вы будете получать уведомления когда система обнаружит незнакомца за вашим компьютером.\n\n"
+                "Проверить статус: /status"
             )
             self.logger.info(f"📝 Пользователь {message.from_user.id} привязал компьютер {computer_id}")
             
         except Exception as e:
             self.logger.error(f"Ошибка регистрации: {e}")
             await message.answer("❌ Ошибка привязки компьютера")
+    
+    async def _status_command(self, message: Message):
+        """Обработчик команды /status"""
+        try:
+            reg_file = Path("user_registrations.json")
+            if reg_file.exists():
+                with open(reg_file, 'r', encoding='utf-8') as f:
+                    registrations = json.load(f)
+                
+                user_data = registrations.get(str(message.from_user.id))
+                if user_data:
+                    computer_id = user_data.get('computer_id', 'Неизвестно')
+                    await message.answer(
+                        f"📊 <b>Статус вашей системы</b>\n\n"
+                        f"💻 Привязанный компьютер: <code>{computer_id}</code>\n"
+                        f"👤 Ваш ID: <code>{message.from_user.id}</code>\n"
+                        f"✅ Система активна и отслеживает незнакомцев\n\n"
+                        f"Вы будете получать уведомления когда система обнаружит "
+                        f"незнакомое лицо перед камерой компьютера {computer_id}."
+                    )
+                else:
+                    await message.answer(
+                        "❌ У вас нет привязанных компьютеров.\n\n"
+                        "Используйте: <code>/register COMPUTER_ID</code>"
+                    )
+            else:
+                await message.answer(
+                    "❌ У вас нет привязанных компьютеров.\n\n"
+                    "Используйте: <code>/register COMPUTER_ID</code>"
+                )
+                
+        except Exception as e:
+            self.logger.error(f"Ошибка проверки статуса: {e}")
+            await message.answer("❌ Ошибка проверки статуса")
     
     async def _help_command(self, message: Message):
         """Обработчик команды /help"""
@@ -116,6 +139,7 @@ class TelegramBot:
             "<b>Доступные команды:</b>\n"
             "/start - начать работу\n"
             "/register COMPUTER_ID - привязать компьютер\n"
+            "/status - проверить статус\n"
             "/help - эта справка\n\n"
             "<b>Как использовать:</b>\n"
             "1. Установите программу на компьютер\n"
@@ -157,21 +181,27 @@ class TelegramBot:
             
             # Отправляем фото если есть
             if stranger_photo_path and Path(stranger_photo_path).exists():
-                photo = FSInputFile(stranger_photo_path)
-                await self.bot.send_photo(
-                    chat_id=user_chat_id,
-                    photo=photo,
-                    caption="📸 Обнаруженное лицо"
-                )
+                try:
+                    photo = FSInputFile(stranger_photo_path)
+                    await self.bot.send_photo(
+                        chat_id=user_chat_id,
+                        photo=photo,
+                        caption="📸 Обнаруженное лицо"
+                    )
+                except Exception as e:
+                    self.logger.error(f"❌ Ошибка отправки фото: {e}")
             
             # Отправляем скриншот если есть
             if screenshot_path and Path(screenshot_path).exists():
-                screenshot = FSInputFile(screenshot_path)
-                await self.bot.send_photo(
-                    chat_id=user_chat_id,
-                    photo=screenshot,
-                    caption="🖥️ Скриншот рабочего стола"
-                )
+                try:
+                    screenshot = FSInputFile(screenshot_path)
+                    await self.bot.send_photo(
+                        chat_id=user_chat_id,
+                        photo=screenshot,
+                        caption="🖥️ Скриншот рабочего стола"
+                    )
+                except Exception as e:
+                    self.logger.error(f"❌ Ошибка отправки скриншота: {e}")
             
             self.logger.info(f"✅ Уведомление отправлено пользователю {user_chat_id}")
             return True
@@ -200,6 +230,9 @@ class TelegramBot:
             return None
     
     async def start_polling(self):
-        """Запускает бота (для отдельного запуска)"""
-        self.logger.info("🚀 Запуск Telegram бота...")
-        await self.dp.start_polling(self.bot)
+        """Запускает поллинг бота"""
+        self.logger.info("🚀 Запуск поллинга Telegram бота...")
+        try:
+            await self.dp.start_polling(self.bot)
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка поллинга бота: {e}")
