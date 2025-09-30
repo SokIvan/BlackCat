@@ -1,13 +1,14 @@
 import logging
 from typing import Optional
 from pathlib import Path
-import json
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import Message, FSInputFile
 import asyncio
+
+from data_manager import DataManager  # ⬅️ ИМПОРТИРУЕМ НОВЫЙ МЕНЕДЖЕР ДАННЫХ
 
 class TelegramBot:
     def __init__(self, token: str = None):
@@ -22,6 +23,7 @@ class TelegramBot:
             default=DefaultBotProperties(parse_mode=ParseMode.HTML)
         )
         self.dp = Dispatcher()
+        self.data_manager = DataManager()  # ⬅️ СОЗДАЕМ МЕНЕДЖЕР ДАННЫХ
         
         self._register_handlers()
         self.logger.info("✅ Telegram бот (aiogram) инициализирован")
@@ -32,6 +34,8 @@ class TelegramBot:
         self.dp.message(Command("register"))(self._register_command)
         self.dp.message(Command("help"))(self._help_command)
         self.dp.message(Command("status"))(self._status_command)
+        self.dp.message(Command("stats"))(self._stats_command)  # ⬅️ НОВАЯ КОМАНДА
+        self.dp.message(Command("alerts"))(self._alerts_command)  # ⬅️ НОВАЯ КОМАНДА
     
     async def _start_command(self, message: Message):
         """Обработчик команды /start"""
@@ -39,9 +43,14 @@ class TelegramBot:
             "🛡️ <b>Computer Guard Bot</b>\n\n"
             "Я буду отправлять вам уведомления когда кто-то посторонний "
             "сядет за ваш компьютер.\n\n"
+            "<b>Доступные команды:</b>\n"
+            "/register - привязать компьютер\n"
+            "/status - статус системы\n" 
+            "/alerts - история уведомлений\n"
+            "/stats - статистика\n"
+            "/help - справка\n\n"
             "Для привязки компьютера используйте:\n"
-            "<code>/register YOUR_COMPUTER_ID</code>\n\n"
-            "Для справки: /help"
+            "<code>/register YOUR_COMPUTER_ID</code>"
         )
         self.logger.info(f"👤 Пользователь {message.from_user.id} запустил бота")
     
@@ -53,46 +62,42 @@ class TelegramBot:
                 await message.answer(
                     "❌ Неправильный формат команды.\n"
                     "Используйте: <code>/register COMPUTER_ID</code>\n\n"
-                    "Пример: <code>/register A1B2C3D4</code>"
+                    "Пример: <code>/register A1B2C3D4</code>\n\n"
+                    "💡 ID компьютера можно найти в файле computer_config.json "
+                    "на вашем компьютере"
                 )
                 return
             
             computer_id = parts[1].strip().upper()
+            user_id = message.from_user.id
             
-            # Загружаем существующие регистрации
-            registrations = {}
-            reg_file = Path("user_registrations.json")
-            if reg_file.exists():
-                try:
-                    with open(reg_file, 'r', encoding='utf-8') as f:
-                        registrations = json.load(f)
-                except Exception as e:
-                    self.logger.error(f"Ошибка чтения файла регистраций: {e}")
-                    registrations = {}
-            
-            # Сохраняем привязку пользователь -> компьютер
-            registrations[str(message.from_user.id)] = {
-                "computer_id": computer_id,
-                "username": message.from_user.username,
-                "first_name": message.from_user.first_name,
-                "registered_at": message.date.isoformat()
-            }
-            
-            # Сохраняем в файл
-            try:
-                with open(reg_file, 'w', encoding='utf-8') as f:
-                    json.dump(registrations, f, indent=2, ensure_ascii=False)
-            except Exception as e:
-                self.logger.error(f"Ошибка записи файла регистраций: {e}")
-                await message.answer("❌ Ошибка сохранения привязки")
+            # Проверяем, не привязан ли уже этот компьютер к другому пользователю
+            existing_user = self.data_manager.get_user_by_computer_id(computer_id)
+            if existing_user and existing_user != user_id:
+                await message.answer(
+                    "❌ Этот компьютер уже привязан к другому пользователю!\n\n"
+                    "💡 Каждый компьютер можно привязать только к одному пользователю."
+                )
                 return
             
-            await message.answer(
-                f"✅ Компьютер <code>{computer_id}</code> успешно привязан!\n\n"
-                "Теперь вы будете получать уведомления когда система обнаружит незнакомца за вашим компьютером.\n\n"
-                "Проверить статус: /status"
+            # Регистрируем пользователя
+            success = self.data_manager.register_user(
+                user_id=user_id,
+                computer_id=computer_id,
+                username=message.from_user.username,
+                first_name=message.from_user.first_name
             )
-            self.logger.info(f"📝 Пользователь {message.from_user.id} привязал компьютер {computer_id}")
+            
+            if success:
+                await message.answer(
+                    f"✅ Компьютер <code>{computer_id}</code> успешно привязан!\n\n"
+                    "Теперь вы будете получать уведомления когда система обнаружит "
+                    "незнакомца за вашим компьютером.\n\n"
+                    "Проверить статус: /status\n"
+                    "История уведомлений: /alerts"
+                )
+            else:
+                await message.answer("❌ Ошибка привязки компьютера")
             
         except Exception as e:
             self.logger.error(f"Ошибка регистрации: {e}")
@@ -101,36 +106,103 @@ class TelegramBot:
     async def _status_command(self, message: Message):
         """Обработчик команды /status"""
         try:
-            reg_file = Path("user_registrations.json")
-            if reg_file.exists():
-                with open(reg_file, 'r', encoding='utf-8') as f:
-                    registrations = json.load(f)
+            user_id = message.from_user.id
+            computer_id = self.data_manager.get_computer_by_user_id(user_id)
+            
+            if computer_id:
+                # Получаем историю уведомлений
+                user_alerts = self.data_manager.get_alerts_by_computer(computer_id)
+                total_alerts = len(user_alerts)
+                recent_alerts = user_alerts[-3:]  # Последние 3 уведомления
                 
-                user_data = registrations.get(str(message.from_user.id))
-                if user_data:
-                    computer_id = user_data.get('computer_id', 'Неизвестно')
-                    await message.answer(
-                        f"📊 <b>Статус вашей системы</b>\n\n"
-                        f"💻 Привязанный компьютер: <code>{computer_id}</code>\n"
-                        f"👤 Ваш ID: <code>{message.from_user.id}</code>\n"
-                        f"✅ Система активна и отслеживает незнакомцев\n\n"
-                        f"Вы будете получать уведомления когда система обнаружит "
-                        f"незнакомое лицо перед камерой компьютера {computer_id}."
-                    )
-                else:
-                    await message.answer(
-                        "❌ У вас нет привязанных компьютеров.\n\n"
-                        "Используйте: <code>/register COMPUTER_ID</code>"
-                    )
+                status_text = (
+                    f"📊 <b>Статус вашей системы</b>\n\n"
+                    f"💻 Привязанный компьютер: <code>{computer_id}</code>\n"
+                    f"👤 Ваш ID: <code>{user_id}</code>\n"
+                    f"📨 Всего уведомлений: {total_alerts}\n"
+                    f"✅ Система активна и отслеживает незнакомцев"
+                )
+                
+                if recent_alerts:
+                    status_text += "\n\n<b>Последние уведомления:</b>\n"
+                    for alert in reversed(recent_alerts):
+                        status_text += f"• {alert['timestamp'][:16]} - {alert['detection_count']} обнаружений\n"
+                
+                await message.answer(status_text)
             else:
                 await message.answer(
                     "❌ У вас нет привязанных компьютеров.\n\n"
-                    "Используйте: <code>/register COMPUTER_ID</code>"
+                    "Используйте: <code>/register COMPUTER_ID</code>\n\n"
+                    "💡 ID компьютера можно найти в файле computer_config.json "
+                    "на вашем компьютере"
                 )
                 
         except Exception as e:
             self.logger.error(f"Ошибка проверки статуса: {e}")
             await message.answer("❌ Ошибка проверки статуса")
+    
+    async def _stats_command(self, message: Message):
+        """Обработчик команды /stats - статистика системы"""
+        try:
+            stats = self.data_manager.get_stats()
+            
+            stats_text = (
+                "📈 <b>Статистика системы Computer Guard</b>\n\n"
+                f"👥 Всего пользователей: {stats['total_users']}\n"
+                f"💻 Всего компьютеров: {stats['total_computers']}\n"
+                f"🚨 Всего уведомлений: {stats['total_alerts']}\n"
+                f"🕐 Обновлено: {stats['last_updated'][:16]}\n\n"
+                "💡 Система работает стабильно!"
+            )
+            
+            await message.answer(stats_text)
+            
+        except Exception as e:
+            self.logger.error(f"Ошибка получения статистики: {e}")
+            await message.answer("❌ Ошибка получения статистики")
+    
+    async def _alerts_command(self, message: Message):
+        """Обработчик команды /alerts - история уведомлений"""
+        try:
+            user_id = message.from_user.id
+            computer_id = self.data_manager.get_computer_by_user_id(user_id)
+            
+            if not computer_id:
+                await message.answer(
+                    "❌ У вас нет привязанных компьютеров.\n\n"
+                    "Сначала привяжите компьютер: /register"
+                )
+                return
+            
+            user_alerts = self.data_manager.get_alerts_by_computer(computer_id)
+            
+            if not user_alerts:
+                await message.answer(
+                    "📭 <b>История уведомлений</b>\n\n"
+                    "У вас пока нет уведомлений.\n"
+                    "Система будет отправлять уведомления когда обнаружит незнакомцев."
+                )
+                return
+            
+            # Показываем последние 5 уведомлений
+            recent_alerts = user_alerts[-5:]
+            alerts_text = "📭 <b>Последние уведомления</b>\n\n"
+            
+            for alert in reversed(recent_alerts):
+                time_str = alert['timestamp'][:16].replace('T', ' ')
+                alerts_text += (
+                    f"🕐 <b>{time_str}</b>\n"
+                    f"   👤 Обнаружений: {alert['detection_count']}\n"
+                    f"   💻 Компьютер: <code>{alert['computer_id']}</code>\n\n"
+                )
+            
+            alerts_text += f"Всего уведомлений: {len(user_alerts)}"
+            
+            await message.answer(alerts_text)
+            
+        except Exception as e:
+            self.logger.error(f"Ошибка получения уведомлений: {e}")
+            await message.answer("❌ Ошибка получения истории уведомлений")
     
     async def _help_command(self, message: Message):
         """Обработчик команды /help"""
@@ -139,7 +211,9 @@ class TelegramBot:
             "<b>Доступные команды:</b>\n"
             "/start - начать работу\n"
             "/register COMPUTER_ID - привязать компьютер\n"
-            "/status - проверить статус\n"
+            "/status - статус вашей системы\n"
+            "/alerts - история уведомлений\n" 
+            "/stats - статистика системы\n"
             "/help - эта справка\n\n"
             "<b>Как использовать:</b>\n"
             "1. Установите программу на компьютер\n"
@@ -161,11 +235,14 @@ class TelegramBot:
         """Отправляет уведомление пользователю через aiogram"""
         try:
             # Находим пользователя по computer_id
-            user_chat_id = await self._find_user_by_computer_id(computer_id)
+            user_chat_id = self.data_manager.get_user_by_computer_id(computer_id)
             
             if not user_chat_id:
                 self.logger.error(f"❌ Не найден пользователь для компьютера {computer_id}")
                 return False
+            
+            # Сохраняем уведомление в историю
+            self.data_manager.save_alert(computer_id, detection_count, timestamp)
             
             # Формируем сообщение
             alert_message = (
@@ -173,7 +250,8 @@ class TelegramBot:
                 f"💻 Компьютер: <code>{computer_id}</code>\n"
                 f"📊 Количество обнаружений: {detection_count}\n"
                 f"🕐 Время: {timestamp}\n"
-                f"📝 {message}"
+                f"📝 {message}\n\n"
+                f"📈 Посмотреть историю: /alerts"
             )
             
             # Отправляем текстовое сообщение
@@ -209,25 +287,6 @@ class TelegramBot:
         except Exception as e:
             self.logger.error(f"❌ Ошибка отправки уведомления: {e}")
             return False
-    
-    async def _find_user_by_computer_id(self, computer_id: str) -> Optional[int]:
-        """Находит chat_id пользователя по computer_id"""
-        try:
-            reg_file = Path("user_registrations.json")
-            if reg_file.exists():
-                with open(reg_file, 'r', encoding='utf-8') as f:
-                    registrations = json.load(f)
-                
-                for chat_id_str, user_data in registrations.items():
-                    if user_data.get('computer_id') == computer_id:
-                        return int(chat_id_str)
-            
-            self.logger.warning(f"⚠️ Компьютер {computer_id} не привязан к пользователю")
-            return None
-            
-        except Exception as e:
-            self.logger.error(f"Ошибка поиска пользователя: {e}")
-            return None
     
     async def start_polling(self):
         """Запускает поллинг бота"""
