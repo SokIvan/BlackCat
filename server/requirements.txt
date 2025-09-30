@@ -3,11 +3,5 @@ uvicorn==0.24.0
 python-multipart==0.0.6
 aiogram==3.10.0
 aiofiles==23.2.1
-<<<<<<< HEAD
-supabase==2.20.0
+supabase==2.20.0  # ⬅️ ПОСЛЕДНЯЯ ВЕРСИЯ
 python-dotenv==1.0.0
-=======
-supabase-py==2.20.0
-python-dotenv==1.0.0
-requests==2.31.0
->>>>>>> c90eb347bedaa7c7d293e3cc2a0deaa98f722a81
