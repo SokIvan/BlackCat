@@ -8,7 +8,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import Message, FSInputFile
 import asyncio
 
-from server.supabase_storage import SupabaseStorage  # ⬅️ ЗАМЕНИЛИ ИМПОРТ
+from supabase_storage import SupabaseStorage  # ⬅️ ЗАМЕНИЛИ ИМПОРТ
 
 class TelegramBot:
     def __init__(self, token: str = None):
