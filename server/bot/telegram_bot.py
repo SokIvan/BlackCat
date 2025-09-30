@@ -8,7 +8,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import Message, FSInputFile
 import asyncio
 
-from data_manager import DataManager  # ⬅️ ИМПОРТИРУЕМ НОВЫЙ МЕНЕДЖЕР ДАННЫХ
+from server.supabase_storage import SupabaseStorage  # ⬅️ ЗАМЕНИЛИ ИМПОРТ
 
 class TelegramBot:
     def __init__(self, token: str = None):
@@ -23,10 +23,11 @@ class TelegramBot:
             default=DefaultBotProperties(parse_mode=ParseMode.HTML)
         )
         self.dp = Dispatcher()
-        self.data_manager = DataManager()  # ⬅️ СОЗДАЕМ МЕНЕДЖЕР ДАННЫХ
+        self.data_manager = SupabaseStorage()  # ⬅️ ИСПОЛЬЗУЕМ SUPABASE
+        self.is_polling = False
         
         self._register_handlers()
-        self.logger.info("✅ Telegram бот (aiogram) инициализирован")
+        self.logger.info("✅ Telegram бот (aiogram) инициализирован с Supabase")
     
     def _register_handlers(self):
         """Регистрирует обработчики команд aiogram"""
