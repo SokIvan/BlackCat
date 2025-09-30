@@ -6,7 +6,6 @@ from typing import Optional
 import os
 from pathlib import Path
 import asyncio
-import threading
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -26,25 +25,6 @@ app.add_middleware(
 # Глобальная переменная для бота
 telegram_bot = None
 
-def start_bot_polling():
-    """Запускает поллинг бота в отдельном потоке"""
-    try:
-        from bot.telegram_bot import TelegramBot
-        
-        token = os.getenv('TELEGRAM_BOT_TOKEN')
-        if not token:
-            logger.error("❌ TELEGRAM_BOT_TOKEN не установлен")
-            return
-        
-        bot = TelegramBot(token=token)
-        
-        # Запускаем поллинг в event loop
-        import asyncio
-        asyncio.run(bot.start_polling())
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка запуска бота: {e}")
-
 @app.on_event("startup")
 async def startup_event():
     """Инициализация при старте приложения"""
@@ -61,10 +41,9 @@ async def startup_event():
         telegram_bot = TelegramBot(token=token)
         logger.info("✅ Telegram бот инициализирован при старте")
         
-        # Запускаем поллинг в фоновом потоке
-        bot_thread = threading.Thread(target=start_bot_polling, daemon=True)
-        bot_thread.start()
-        logger.info("🚀 Поллинг бота запущен в фоновом режиме")
+        # ЗАПУСКАЕМ ПОЛЛИНГ В ФОНОВОЙ ЗАДАЧЕ, НЕ В ПОТОКЕ!
+        asyncio.create_task(telegram_bot.start_polling())
+        logger.info("🚀 Поллинг бота запущен в фоновой задаче")
         
     except Exception as e:
         logger.error(f"❌ Ошибка инициализации бота: {e}")

@@ -236,3 +236,6 @@ class TelegramBot:
             await self.dp.start_polling(self.bot)
         except Exception as e:
             self.logger.error(f"❌ Ошибка поллинга бота: {e}")
+            # Перезапускаем через 10 секунд при ошибке
+            await asyncio.sleep(10)
+            await self.start_polling()
