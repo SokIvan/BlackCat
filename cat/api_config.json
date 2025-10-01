@@ -1,0 +1,5 @@
+{
+  "server_url": "https://blackcat-mpix.onrender.com",
+  "endpoint": "/api/alert",
+  "timeout": 30
+}

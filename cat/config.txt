@@ -1,0 +1,12 @@
+# Computer Guard System Configuration
+# This file contains settings for the application
+
+terminal_visible=false
+detection_threshold=20
+alert_time_window=60
+camera_index=0
+log_level=INFO
+
+# terminal_visible options:
+# - true: Show terminal window (for debugging)
+# - false: Hide terminal window (for silent operation)
