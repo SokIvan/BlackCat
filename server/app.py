@@ -168,8 +168,6 @@ async def webhook_info():
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-# ... остальные endpointы без изменений ...
-
 async def process_alert_background(
     computer_id: str,
     command: str,

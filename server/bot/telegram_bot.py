@@ -119,6 +119,26 @@ class TelegramBot:
             self.logger.error(f"Ошибка регистрации: {e}")
             await message.answer("❌ Ошибка привязки компьютера")
     
+    async def _stats_command(self, message: Message):
+        """Обработчик команды /stats - статистика системы"""
+        try:
+            stats = self.data_manager.get_stats()
+            
+            stats_text = (
+                "📈 <b>Статистика системы BlackCat</b>\n\n"
+                f"👥 Всего пользователей: {stats['total_users']}\n"
+                f"💻 Всего компьютеров: {stats['total_computers']}\n"
+                f"🚨 Всего уведомлений: {stats['total_alerts']}\n"
+                f"🕐 Обновлено: {stats['last_updated'][:16]}\n\n"
+                "💡 Система работает стабильно!"
+            )
+            
+            await message.answer(stats_text)
+            
+        except Exception as e:
+            self.logger.error(f"Ошибка получения статистики: {e}")
+            await message.answer("❌ Ошибка получения статистики")
+    
     async def _status_command(self, message: Message):
         """Обработчик команды /status"""
         try:
@@ -142,7 +162,21 @@ class TelegramBot:
                 if recent_alerts:
                     status_text += "\n\n<b>Последние уведомления:</b>\n"
                     for alert in reversed(recent_alerts):
-                        status_text += f"• {alert['timestamp'][:16]} - {alert['detection_count']} обнаружений\n"
+                        # ПРАВИЛЬНО обрабатываем timestamp
+                        timestamp = alert.get('created_at', '')
+                        if timestamp:
+                            # Преобразуем ISO формат в читаемый вид
+                            try:
+                                from datetime import datetime
+                                dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                                time_str = dt.strftime('%d.%m.%Y %H:%M')
+                            except:
+                                time_str = timestamp[:16].replace('T', ' ')
+                        else:
+                            time_str = "неизвестно"
+                        
+                        detection_count = alert.get('detection_count', 0)
+                        status_text += f"• {time_str} - {detection_count} обнаружений\n"
                 
                 await message.answer(status_text)
             else:
@@ -152,12 +186,66 @@ class TelegramBot:
                     "💡 ID компьютера можно найти в файле computer_config.json "
                     "на вашем компьютере"
                 )
-                
+                    
         except Exception as e:
             self.logger.error(f"Ошибка проверки статуса: {e}")
             await message.answer("❌ Ошибка проверки статуса")
     
- 
+    async def _alerts_command(self, message: Message):
+        """Обработчик команды /alerts - история уведомлений"""
+        try:
+            user_id = message.from_user.id
+            computer_id = self.data_manager.get_computer_by_user_id(user_id)
+            
+            if not computer_id:
+                await message.answer(
+                    "❌ У вас нет привязанных компьютеров.\n\n"
+                    "Сначала привяжите компьютер: /register"
+                )
+                return
+            
+            user_alerts = self.data_manager.get_alerts_by_computer(computer_id)
+            
+            if not user_alerts:
+                await message.answer(
+                    "📭 <b>История уведомлений</b>\n\n"
+                    "У вас пока нет уведомлений.\n"
+                    "Система будет отправлять уведомления когда обнаружит незнакомцев."
+                )
+                return
+            
+            # Показываем последние 5 уведомлений
+            recent_alerts = user_alerts[-5:]
+            alerts_text = "📭 <b>Последние уведомления</b>\n\n"
+            
+            for alert in reversed(recent_alerts):
+                # ПРАВИЛЬНО обрабатываем timestamp
+                timestamp = alert.get('created_at', '')
+                if timestamp:
+                    try:
+                        from datetime import datetime
+                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                        time_str = dt.strftime('%d.%m.%Y %H:%M')
+                    except:
+                        time_str = timestamp[:16].replace('T', ' ')
+                else:
+                    time_str = "неизвестно"
+                
+                detection_count = alert.get('detection_count', 0)
+                alerts_text += (
+                    f"🕐 <b>{time_str}</b>\n"
+                    f"   👤 Обнаружений: {detection_count}\n"
+                    f"   💻 Компьютер: <code>{alert.get('computer_id', 'N/A')}</code>\n\n"
+                )
+            
+            alerts_text += f"Всего уведомлений: {len(user_alerts)}"
+            
+            await message.answer(alerts_text)
+            
+        except Exception as e:
+            self.logger.error(f"Ошибка получения уведомлений: {e}")
+            await message.answer("❌ Ошибка получения истории уведомлений")
+    
     async def _help_command(self, message: Message):
         """Обработчик команды /help"""
         await message.answer(
