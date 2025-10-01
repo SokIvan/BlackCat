@@ -56,7 +56,7 @@ class TelegramBot:
     async def _start_command(self, message: Message):
         """Обработчик команды /start"""
         await message.answer(
-            "🛡️ <b>Computer Guard Bot</b>\n\n"
+            "🛡️ <b>BlackCat</b>\n\n"
             "Я буду отправлять вам уведомления когда кто-то посторонний "
             "сядет за ваш компьютер.\n\n"
             "<b>Доступные команды:</b>\n"
@@ -157,78 +157,14 @@ class TelegramBot:
             self.logger.error(f"Ошибка проверки статуса: {e}")
             await message.answer("❌ Ошибка проверки статуса")
     
-    async def _stats_command(self, message: Message):
-        """Обработчик команды /stats - статистика системы"""
-        try:
-            stats = self.data_manager.get_stats()
-            
-            stats_text = (
-                "📈 <b>Статистика системы Computer Guard</b>\n\n"
-                f"👥 Всего пользователей: {stats['total_users']}\n"
-                f"💻 Всего компьютеров: {stats['total_computers']}\n"
-                f"🚨 Всего уведомлений: {stats['total_alerts']}\n"
-                f"🕐 Обновлено: {stats['last_updated'][:16]}\n\n"
-                "💡 Система работает стабильно!"
-            )
-            
-            await message.answer(stats_text)
-            
-        except Exception as e:
-            self.logger.error(f"Ошибка получения статистики: {e}")
-            await message.answer("❌ Ошибка получения статистики")
-    
-    async def _alerts_command(self, message: Message):
-        """Обработчик команды /alerts - история уведомлений"""
-        try:
-            user_id = message.from_user.id
-            computer_id = self.data_manager.get_computer_by_user_id(user_id)
-            
-            if not computer_id:
-                await message.answer(
-                    "❌ У вас нет привязанных компьютеров.\n\n"
-                    "Сначала привяжите компьютер: /register"
-                )
-                return
-            
-            user_alerts = self.data_manager.get_alerts_by_computer(computer_id)
-            
-            if not user_alerts:
-                await message.answer(
-                    "📭 <b>История уведомлений</b>\n\n"
-                    "У вас пока нет уведомлений.\n"
-                    "Система будет отправлять уведомления когда обнаружит незнакомцев."
-                )
-                return
-            
-            # Показываем последние 5 уведомлений
-            recent_alerts = user_alerts[-5:]
-            alerts_text = "📭 <b>Последние уведомления</b>\n\n"
-            
-            for alert in reversed(recent_alerts):
-                time_str = alert['timestamp'][:16].replace('T', ' ')
-                alerts_text += (
-                    f"🕐 <b>{time_str}</b>\n"
-                    f"   👤 Обнаружений: {alert['detection_count']}\n"
-                    f"   💻 Компьютер: <code>{alert['computer_id']}</code>\n\n"
-                )
-            
-            alerts_text += f"Всего уведомлений: {len(user_alerts)}"
-            
-            await message.answer(alerts_text)
-            
-        except Exception as e:
-            self.logger.error(f"Ошибка получения уведомлений: {e}")
-            await message.answer("❌ Ошибка получения истории уведомлений")
-    
+ 
     async def _help_command(self, message: Message):
         """Обработчик команды /help"""
         await message.answer(
-            "🛡️ <b>Computer Guard Bot - Помощь</b>\n\n"
+            "<b>BlackCat - Помощь</b>\n\n"
             "<b>Доступные команды:</b>\n"
             "/start - начать работу\n"
             "/register COMPUTER_ID - привязать компьютер\n"
-            "/status - статус вашей системы\n"
-            "/alerts - история уведомлений\n" 
             "/stats - статистика системы\n"
             "/help - эта справка\n\n"
             "<b>Как использовать:</b>\n"
