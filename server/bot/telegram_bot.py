@@ -6,9 +6,10 @@ from aiogram.filters import Command
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import Message, FSInputFile
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler
 import asyncio
 
-from supabase_storage import SupabaseStorage  # ⬅️ ЗАМЕНИЛИ ИМПОРТ
+from supabase_storage import SupabaseStorage
 
 class TelegramBot:
     def __init__(self, token: str = None):
@@ -23,11 +24,10 @@ class TelegramBot:
             default=DefaultBotProperties(parse_mode=ParseMode.HTML)
         )
         self.dp = Dispatcher()
-        self.data_manager = SupabaseStorage()  # ⬅️ ИСПОЛЬЗУЕМ SUPABASE
-        self.is_polling = False
+        self.data_manager = SupabaseStorage()
         
         self._register_handlers()
-        self.logger.info("✅ Telegram бот (aiogram) инициализирован с Supabase")
+        self.logger.info("✅ Telegram бот (aiogram) инициализирован с Webhook")
     
     def _register_handlers(self):
         """Регистрирует обработчики команд aiogram"""
@@ -35,8 +35,23 @@ class TelegramBot:
         self.dp.message(Command("register"))(self._register_command)
         self.dp.message(Command("help"))(self._help_command)
         self.dp.message(Command("status"))(self._status_command)
-        self.dp.message(Command("stats"))(self._stats_command)  # ⬅️ НОВАЯ КОМАНДА
-        self.dp.message(Command("alerts"))(self._alerts_command)  # ⬅️ НОВАЯ КОМАНДА
+        self.dp.message(Command("stats"))(self._stats_command)
+        self.dp.message(Command("alerts"))(self._alerts_command)
+        self.dp.message(Command("wakeup"))(self._wakeup_command)  # Новая команда для "пробуждения"
+    
+    async def _wakeup_command(self, message: Message):
+        """Команда для принудительного пробуждения сервера"""
+        await message.answer(
+            "🔔 <b>Сервер пробужден!</b>\n\n"
+            "Теперь вы можете использовать все команды:\n"
+            "/start - начать работу\n"
+            "/register - привязать компьютер\n"
+            "/status - статус системы\n"
+            "/stats - статистика\n"
+            "/alerts - история уведомлений\n"
+            "/help - справка"
+        )
+        self.logger.info(f"🔔 Сервер пробужден пользователем {message.from_user.id}")
     
     async def _start_command(self, message: Message):
         """Обработчик команды /start"""
@@ -50,8 +65,8 @@ class TelegramBot:
             "/alerts - история уведомлений\n"
             "/stats - статистика\n"
             "/help - справка\n\n"
-            "Для привязки компьютера используйте:\n"
-            "<code>/register YOUR_COMPUTER_ID</code>"
+            "💡 <i>Сервер может \"засыпать\" после 15 минут неактивности. "
+            "Если команды не работают, отправьте /wakeup</i>"
         )
         self.logger.info(f"👤 Пользователь {message.from_user.id} запустил бота")
     
@@ -233,7 +248,7 @@ class TelegramBot:
         stranger_photo_path: Optional[str] = None,
         screenshot_path: Optional[str] = None
     ):
-        """Отправляет уведомление пользователю через aiogram"""
+        """Отправляет уведомление пользователю"""
         try:
             # Находим пользователя по computer_id
             user_chat_id = self.data_manager.get_user_by_computer_id(computer_id)
@@ -243,7 +258,7 @@ class TelegramBot:
                 return False
             
             # Сохраняем уведомление в историю
-            self.data_manager.save_alert(computer_id, detection_count, timestamp)
+            self.data_manager.save_alert(computer_id, detection_count, message)
             
             # Формируем сообщение
             alert_message = (
@@ -288,14 +303,14 @@ class TelegramBot:
         except Exception as e:
             self.logger.error(f"❌ Ошибка отправки уведомления: {e}")
             return False
-    
-    async def start_polling(self):
-        """Запускает поллинг бота"""
-        self.logger.info("🚀 Запуск поллинга Telegram бота...")
-        try:
-            await self.dp.start_polling(self.bot)
-        except Exception as e:
-            self.logger.error(f"❌ Ошибка поллинга бота: {e}")
-            # Перезапускаем через 10 секунд при ошибке
-            await asyncio.sleep(10)
-            await self.start_polling()
+
+# Глобальный экземпляр бота для доступа из app.py
+telegram_bot: Optional[TelegramBot] = None
+
+async def create_bot():
+    """Создает и возвращает экземпляр бота"""
+    global telegram_bot
+    token = os.getenv('TELEGRAM_BOT_TOKEN')
+    if token:
+        telegram_bot = TelegramBot(token=token)
+    return telegram_bot

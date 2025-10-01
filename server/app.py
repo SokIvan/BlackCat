@@ -1,11 +1,14 @@
-from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import uvicorn
 import logging
 from typing import Optional
 import os
 from pathlib import Path
 import asyncio
+import hmac
+import hashlib
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -41,12 +44,66 @@ async def startup_event():
         telegram_bot = TelegramBot(token=token)
         logger.info("✅ Telegram бот инициализирован при старте")
         
-        # ЗАПУСКАЕМ ПОЛЛИНГ В ФОНОВОЙ ЗАДАЧЕ, НЕ В ПОТОКЕ!
-        asyncio.create_task(telegram_bot.start_polling())
-        logger.info("🚀 Поллинг бота запущен в фоновой задаче")
+        # Устанавливаем webhook при старте
+        await set_webhook()
         
     except Exception as e:
         logger.error(f"❌ Ошибка инициализации бота: {e}")
+
+async def set_webhook():
+    """Устанавливает webhook для Telegram бота"""
+    try:
+        webhook_url = os.getenv('RENDER_URL')  # Ваш URL на Render
+        if not webhook_url:
+            # Если RENDER_URL не установлен, используем текущий URL
+            webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME', 'your-app.onrender.com')}"
+        
+        webhook_path = f"{webhook_url}/webhook"
+        
+        from bot.telegram_bot import telegram_bot
+        if telegram_bot:
+            await telegram_bot.bot.set_webhook(webhook_path)
+            logger.info(f"✅ Webhook установлен: {webhook_path}")
+        else:
+            logger.error("❌ Бот не инициализирован для установки webhook")
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка установки webhook: {e}")
+
+@app.post("/webhook")
+async def handle_webhook(request: Request):
+    """Обработчик webhook от Telegram"""
+    try:
+        # Получаем данные запроса
+        data = await request.json()
+        logger.info(f"📨 Получен webhook запрос: {data}")
+        
+        # Обрабатываем обновление через бота
+        from bot.telegram_bot import telegram_bot
+        if telegram_bot:
+            await telegram_bot.dp.feed_webhook_update(telegram_bot.bot, data)
+            return JSONResponse(content={"status": "ok"})
+        else:
+            logger.error("❌ Бот не доступен для обработки webhook")
+            return JSONResponse(content={"status": "error", "message": "Bot not available"}, status_code=503)
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка обработки webhook: {e}")
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
+
+@app.get("/webhook")
+async def get_webhook():
+    """GET endpoint для проверки webhook"""
+    return {"status": "webhook_is_ready"}
+
+@app.get("/set-webhook")
+async def manual_set_webhook():
+    """Ручная установка webhook (для отладки)"""
+    try:
+        await set_webhook()
+        return {"status": "success", "message": "Webhook set manually"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 async def process_alert_background(
     computer_id: str,
@@ -153,15 +210,24 @@ async def root():
         "version": "1.0",
         "status": "healthy",
         "telegram_bot": bot_status,
+        "webhook": "enabled",
         "endpoints": {
+            "webhook": "POST /webhook",
             "alert": "POST /api/alert",
-            "health": "GET /health"
+            "health": "GET /health",
+            "set_webhook": "GET /set-webhook"
         }
     }
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
+    bot_alive = telegram_bot is not None
+    return {
+        "status": "healthy",
+        "telegram_bot": "alive" if bot_alive else "inactive",
+        "webhook": "enabled",
+        "timestamp": __import__('datetime').datetime.now().isoformat()
+    }
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
